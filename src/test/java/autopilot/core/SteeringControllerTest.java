@@ -1,7 +1,5 @@
 package autopilot.core;
 
-import autopilot.exception.IllegalGearChangeException;
-import autopilot.sensor.SpeedSensor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -12,209 +10,148 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class SteeringControllerTest {
 
-    private FakeSpeedSensor fakeSensor;
-    private GearBox gearBox;
+    private SteeringController controller;
 
     @BeforeEach
     void setUp() {
-        fakeSensor = new FakeSpeedSensor();
-        gearBox = new GearBox(fakeSensor);
+        controller = new SteeringController();
     }
 
-    // --- INITIALIZATION & NULL CHECKS ---
+    // --- INITIALIZATION TESTS ---
 
     @Test
-    @DisplayName("Constructor with null sensor throws NullPointerException")
-    void constructor_nullSensor_throwsNullPointerException() {
-        assertThrows(NullPointerException.class, () -> new GearBox(null));
+    @DisplayName("Initial state should have 0 degrees for both current and target angles")
+    void initialState_isZero() {
+        assertEquals(0.0, controller.getCurrentAngleDegrees());
+        assertEquals(0.0, controller.getTargetAngleDegrees());
+    }
+
+    // --- MOVEMENT & TICK LIMIT TESTS ---
+
+    @Test
+    @DisplayName("Update within tick limit moves current angle instantly to target")
+    void update_withinTickLimit_reachesTargetInstantly() {
+        double newAngle = controller.update(50.0, 50.0);
+
+        assertEquals(50.0, newAngle);
+        assertEquals(50.0, controller.getCurrentAngleDegrees());
+        assertEquals(50.0, controller.getTargetAngleDegrees());
     }
 
     @Test
-    @DisplayName("Setting null speed sensor throws NullPointerException")
-    void setSpeedSensor_null_throwsNullPointerException() {
-        assertThrows(NullPointerException.class, () -> gearBox.setSpeedSensor(null));
+    @DisplayName("Update exceeding tick limit caps movement to 60 degrees per tick (Positive)")
+    void update_exceedsTickLimitPositive_movesByMaxChange() {
+        double firstUpdate = controller.update(100.0, 50.0);
+        assertEquals(60.0, firstUpdate, "First tick should be capped at 60.0 degrees");
+        assertEquals(100.0, controller.getTargetAngleDegrees(), "Target angle should be stored as 100.0");
+
+        double secondUpdate = controller.update(100.0, 50.0);
+        assertEquals(100.0, secondUpdate, "Second tick should cover the remaining distance");
     }
 
     @Test
-    @DisplayName("Initial gear should be Park (P)")
-    void initialState_isPark() {
-        assertEquals(GearBox.Gear.P, gearBox.getCurrentGear());
+    @DisplayName("Update exceeding tick limit caps movement to 60 degrees per tick (Negative)")
+    void update_exceedsTickLimitNegative_movesByMaxChange() {
+        double firstUpdate = controller.update(-100.0, 50.0);
+        assertEquals(-60.0, firstUpdate);
+        assertEquals(-100.0, controller.getTargetAngleDegrees());
+
+        double secondUpdate = controller.update(-100.0, 50.0);
+        assertEquals(-100.0, secondUpdate);
     }
 
-    // --- SAME GEAR (EARLY EXIT) ---
+    // --- SPEED LIMIT CLAMPING TESTS ---
 
     @Test
-    @DisplayName("Changing to the current gear ignores speed validation and succeeds")
-    void changeTo_sameGear_returnsEarly() {
-        fakeSensor.setSpeed(-50.0); // Would normally throw IllegalArgumentException
-        assertDoesNotThrow(() -> gearBox.changeTo(GearBox.Gear.P));
-        assertEquals(GearBox.Gear.P, gearBox.getCurrentGear());
+    @DisplayName("Low speed requested angle is clamped to positive physical limit (450)")
+    void update_lowSpeed_clampsToPositivePhysicalLimit() {
+        controller.update(500.0, 50.0); // 500 > 450
+        assertEquals(450.0, controller.getTargetAngleDegrees());
     }
 
-    // --- INVALID SPEED VALUES ---
+    @Test
+    @DisplayName("Low speed requested angle is clamped to negative physical limit (-450)")
+    void update_lowSpeed_clampsToNegativePhysicalLimit() {
+        controller.update(-500.0, 50.0); // -500 < -450
+        assertEquals(-450.0, controller.getTargetAngleDegrees());
+    }
+
+    @Test
+    @DisplayName("High speed requested angle is clamped to positive high speed limit (90)")
+    void update_highSpeed_clampsToPositiveHighSpeedLimit() {
+        controller.update(150.0, 130.0); // 150 > 90
+        assertEquals(90.0, controller.getTargetAngleDegrees());
+    }
+
+    @Test
+    @DisplayName("High speed requested angle is clamped to negative high speed limit (-90)")
+    void update_highSpeed_clampsToNegativeHighSpeedLimit() {
+        controller.update(-150.0, 130.0); // -150 < -90
+        assertEquals(-90.0, controller.getTargetAngleDegrees());
+    }
+
+    @Test
+    @DisplayName("Speed exactly at high speed threshold (120) uses the wider physical limit")
+    void update_atExactSpeedThreshold_usesPhysicalLimit() {
+        // According to `speedKmh > HIGH_SPEED_THRESHOLD_KMH`, exactly 120.0 should evaluate to false.
+        controller.update(150.0, 120.0);
+        assertEquals(150.0, controller.getTargetAngleDegrees(), "Should allow 150 because limit is 450 at this speed");
+    }
+
+    // --- SELF CENTERING TESTS ---
+
+    @Test
+    @DisplayName("Self center targets 0.0 and obeys tick movement limits from a positive angle")
+    void selfCenter_fromPositiveAngle_movesTowardsZero() {
+        // Move to 100 first
+        controller.update(100.0, 50.0);
+        controller.update(100.0, 50.0);
+        assertEquals(100.0, controller.getCurrentAngleDegrees());
+
+        // Self center
+        double centerTick = controller.selfCenter();
+        assertEquals(40.0, centerTick, "Should reduce by 60 degrees per tick towards 0");
+        assertEquals(0.0, controller.getTargetAngleDegrees());
+
+        double finalTick = controller.selfCenter();
+        assertEquals(0.0, finalTick);
+    }
+
+    @Test
+    @DisplayName("Self center targets 0.0 and obeys tick movement limits from a negative angle")
+    void selfCenter_fromNegativeAngle_movesTowardsZero() {
+        // Move to -100 first
+        controller.update(-100.0, 50.0);
+        controller.update(-100.0, 50.0);
+        assertEquals(-100.0, controller.getCurrentAngleDegrees());
+
+        // Self center
+        double centerTick = controller.selfCenter();
+        assertEquals(-40.0, centerTick, "Should increase by 60 degrees per tick towards 0");
+        assertEquals(0.0, controller.getTargetAngleDegrees());
+    }
+
+    // --- VALIDATION & EXCEPTIONS TESTS ---
+
+    @ParameterizedTest
+    @ValueSource(doubles = {Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY})
+    @DisplayName("Non-finite angles throw IllegalArgumentException")
+    void update_invalidAngle_throwsIllegalArgumentException(double invalidAngle) {
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> controller.update(invalidAngle, 50.0)
+        );
+        assertEquals("requested angle must be finite", exception.getMessage());
+    }
 
     @ParameterizedTest
     @ValueSource(doubles = {-1.0, -0.1, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY})
     @DisplayName("Invalid speed values throw IllegalArgumentException")
-    void changeTo_invalidSpeed_throwsIllegalArgumentException(double invalidSpeed) {
-        fakeSensor.setSpeed(invalidSpeed);
+    void update_invalidSpeed_throwsIllegalArgumentException(double invalidSpeed) {
         IllegalArgumentException exception = assertThrows(
                 IllegalArgumentException.class,
-                () -> gearBox.changeTo(GearBox.Gear.R)
+                () -> controller.update(30.0, invalidSpeed)
         );
         assertEquals("speed must be a finite non-negative value", exception.getMessage());
-    }
-
-    // --- VALID TRANSITIONS ---
-
-    @Test
-    @DisplayName("P -> R is allowed if speed is strictly under 5.0 km/h")
-    void changeTo_PtoR_underSpeedLimit_succeeds() {
-        fakeSensor.setSpeed(4.99);
-        gearBox.changeTo(GearBox.Gear.R);
-        assertEquals(GearBox.Gear.R, gearBox.getCurrentGear());
-    }
-
-    @Test
-    @DisplayName("R -> D is allowed when stationary")
-    void changeTo_RtoD_stationary_succeeds() {
-        setToReverse();
-
-        fakeSensor.setSpeed(0.0);
-        gearBox.changeTo(GearBox.Gear.D);
-        assertEquals(GearBox.Gear.D, gearBox.getCurrentGear());
-    }
-
-    @Test
-    @DisplayName("D -> R is allowed when stationary")
-    void changeTo_DtoR_stationary_succeeds() {
-        setToDrive();
-
-        fakeSensor.setSpeed(0.0);
-        gearBox.changeTo(GearBox.Gear.R);
-        assertEquals(GearBox.Gear.R, gearBox.getCurrentGear());
-    }
-
-    @Test
-    @DisplayName("R -> N is allowed at any moving speed")
-    void changeTo_RtoN_atAnySpeed_succeeds() {
-        setToReverse();
-
-        fakeSensor.setSpeed(20.0); // Moving backwards
-        gearBox.changeTo(GearBox.Gear.N);
-        assertEquals(GearBox.Gear.N, gearBox.getCurrentGear());
-    }
-
-    @Test
-    @DisplayName("N -> D is allowed at any moving speed")
-    void changeTo_NtoD_atAnySpeed_succeeds() {
-        setToNeutral();
-
-        fakeSensor.setSpeed(50.0); // Coasting forward
-        gearBox.changeTo(GearBox.Gear.D);
-        assertEquals(GearBox.Gear.D, gearBox.getCurrentGear());
-    }
-
-    // --- SPEED BOUNDARY VIOLATIONS ---
-
-    @Test
-    @DisplayName("P -> R fails if speed is exactly 5.0 km/h or higher")
-    void changeTo_PtoR_atOrAboveSpeedLimit_fails() {
-        fakeSensor.setSpeed(5.0);
-        assertThrows(IllegalGearChangeException.class, () -> gearBox.changeTo(GearBox.Gear.R));
-    }
-
-    @Test
-    @DisplayName("R -> D fails if vehicle is moving")
-    void changeTo_RtoD_moving_fails() {
-        setToReverse();
-        fakeSensor.setSpeed(0.1);
-        assertThrows(IllegalGearChangeException.class, () -> gearBox.changeTo(GearBox.Gear.D));
-    }
-
-    @Test
-    @DisplayName("D -> R fails if vehicle is moving")
-    void changeTo_DtoR_moving_fails() {
-        setToDrive();
-        fakeSensor.setSpeed(0.1);
-        assertThrows(IllegalGearChangeException.class, () -> gearBox.changeTo(GearBox.Gear.R));
-    }
-
-    // --- ILLEGAL STATE TRANSITIONS ---
-    // These tests ensure paths not explicitly permitted by isAllowed() are rejected.
-
-    @Test
-    @DisplayName("P -> D is an illegal transition")
-    void changeTo_PtoD_fails() {
-        fakeSensor.setSpeed(0.0);
-        assertThrows(IllegalGearChangeException.class, () -> gearBox.changeTo(GearBox.Gear.D));
-    }
-
-    @Test
-    @DisplayName("P -> N is an illegal transition")
-    void changeTo_PtoN_fails() {
-        fakeSensor.setSpeed(0.0);
-        assertThrows(IllegalGearChangeException.class, () -> gearBox.changeTo(GearBox.Gear.N));
-    }
-
-    @Test
-    @DisplayName("N -> R is an illegal transition")
-    void changeTo_NtoR_fails() {
-        setToNeutral();
-        fakeSensor.setSpeed(0.0);
-        assertThrows(IllegalGearChangeException.class, () -> gearBox.changeTo(GearBox.Gear.R));
-    }
-
-    @Test
-    @DisplayName("Shifting back to P is illegal from any gear (D -> P)")
-    void changeTo_DtoP_fails() {
-        setToDrive();
-        fakeSensor.setSpeed(0.0);
-        assertThrows(IllegalGearChangeException.class, () -> gearBox.changeTo(GearBox.Gear.P));
-    }
-
-    @Test
-    @DisplayName("D -> N is an illegal transition")
-    void changeTo_DtoN_fails() {
-        setToDrive();
-        fakeSensor.setSpeed(0.0);
-        assertThrows(IllegalGearChangeException.class, () -> gearBox.changeTo(GearBox.Gear.N));
-    }
-
-    // --- STATE SETUP HELPERS ---
-
-    private void setToReverse() {
-        fakeSensor.setSpeed(0.0);
-        gearBox.changeTo(GearBox.Gear.R);
-    }
-
-    private void setToNeutral() {
-        fakeSensor.setSpeed(0.0);
-        gearBox.changeTo(GearBox.Gear.R);
-        gearBox.changeTo(GearBox.Gear.N);
-    }
-
-    private void setToDrive() {
-        fakeSensor.setSpeed(0.0);
-        gearBox.changeTo(GearBox.Gear.R);
-        gearBox.changeTo(GearBox.Gear.D);
-    }
-
-    // --- FAKE DEPENDENCY ---
-
-    /**
-     * Lightweight fake implementation of SpeedSensor to avoid Mockito coupling.
-     */
-    private static class FakeSpeedSensor implements SpeedSensor {
-        private double speed = 0.0;
-
-        public void setSpeed(double speed) {
-            this.speed = speed;
-        }
-
-        @Override
-        public double getSpeedKmh() {
-            return speed;
-        }
     }
 }
