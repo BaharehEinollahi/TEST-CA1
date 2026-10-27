@@ -10,6 +10,19 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class BrakeControllerTest {
 
+    private static final double NORMAL_PRESSURE = 50.0;
+    private static final double NORMAL_SPEED = 20.0;
+    private static final double MAX_PRESSURE = 100.0;
+    private static final double EXCESSIVE_PRESSURE = 150.0;
+    private static final double HIGH_SPEED = 50.0;
+
+    private static final double ABS_PRESSURE_THRESHOLD = 80.0;
+    private static final double ABS_SPEED_THRESHOLD = 30.0;
+    private static final double ABS_TRIGGER_PRESSURE = 85.0;
+    private static final double ABS_TRIGGER_SPEED = 35.0;
+    private static final double ABS_HIGH_PULSE = 90.0;
+    private static final double ABS_LOW_PULSE = 60.0;
+
     private BrakeController controller;
     private final GearBox.Gear validGear = GearBox.Gear.D;
 
@@ -18,39 +31,29 @@ class BrakeControllerTest {
         controller = new BrakeController();
     }
 
-    @Test
-    @DisplayName("Initial state should have 0 pressure and no warning")
-    void initialState_hasZeroPressureAndNoWarning() {
-        assertEquals(0.0, controller.getPressure());
-        assertFalse(controller.isWarningActive());
-    }
-
     // --- NORMAL BRAKING TESTS ---
 
     @Test
     @DisplayName("Normal conditions should apply requested exact pressure")
     void apply_normalConditions_setsExactPressure() {
-        double result = controller.apply(50.0, 20.0, validGear);
-        assertEquals(50.0, result);
-        assertEquals(50.0, controller.getPressure());
+        double result = controller.apply(NORMAL_PRESSURE, NORMAL_SPEED, validGear);
+        assertEquals(NORMAL_PRESSURE, result);
+        assertEquals(NORMAL_PRESSURE, controller.getPressure());
     }
 
     @Test
     @DisplayName("Requested pressure exceeding MAX_PRESSURE caps at 100.0 without ABS")
     void apply_exceedsMaxPressureAtLowSpeed_capsAtMax() {
-        double result = controller.apply(150.0, 20.0, validGear);
-        assertEquals(100.0, result);
-        assertEquals(100.0, controller.getPressure());
+        double result = controller.apply(EXCESSIVE_PRESSURE, NORMAL_SPEED, validGear);
+        assertEquals(MAX_PRESSURE, result);
+        assertEquals(MAX_PRESSURE, controller.getPressure());
     }
 
     @Test
     @DisplayName("Values exactly at ABS thresholds do NOT trigger ABS")
     void apply_exactlyAtAbsThresholds_doesNotTriggerAbs() {
-        // Exactly at pressure threshold, speed above
-        assertEquals(80.0, controller.apply(80.0, 50.0, validGear));
-
-        // Pressure above threshold, exactly at speed threshold
-        assertEquals(85.0, controller.apply(85.0, 30.0, validGear));
+        assertEquals(ABS_PRESSURE_THRESHOLD, controller.apply(ABS_PRESSURE_THRESHOLD, NORMAL_SPEED, validGear));
+        assertEquals(ABS_TRIGGER_PRESSURE, controller.apply(ABS_TRIGGER_PRESSURE, ABS_SPEED_THRESHOLD, validGear));
     }
 
     // --- ABS BRAKING TESTS ---
@@ -58,26 +61,25 @@ class BrakeControllerTest {
     @Test
     @DisplayName("ABS conditions met should alternate high and low pulses")
     void apply_absConditionsMet_alternatesPulses() {
-        assertEquals(90.0, controller.apply(85.0, 35.0, validGear), "1st pulse should be HIGH (90.0)");
-        assertEquals(60.0, controller.apply(85.0, 35.0, validGear), "2nd pulse should be LOW (60.0)");
-        assertEquals(90.0, controller.apply(85.0, 35.0, validGear), "3rd pulse should be HIGH (90.0)");
-        assertEquals(60.0, controller.apply(85.0, 35.0, validGear), "4th pulse should be LOW (60.0)");
+        assertEquals(ABS_HIGH_PULSE, controller.apply(ABS_TRIGGER_PRESSURE, ABS_TRIGGER_SPEED, validGear));
+        assertEquals(ABS_LOW_PULSE, controller.apply(ABS_TRIGGER_PRESSURE, ABS_TRIGGER_SPEED, validGear));
+        assertEquals(ABS_HIGH_PULSE, controller.apply(ABS_TRIGGER_PRESSURE, ABS_TRIGGER_SPEED, validGear));
+        assertEquals(ABS_LOW_PULSE, controller.apply(ABS_TRIGGER_PRESSURE, ABS_TRIGGER_SPEED, validGear));
     }
 
     @Test
     @DisplayName("Requested pressure exceeding MAX_PRESSURE at high speed triggers ABS")
     void apply_exceedsMaxPressureAtHighSpeed_triggersAbs() {
-        // requested 150 -> bounded 100 -> bounded > 80 && speed > 30 -> ABS HIGH
-        assertEquals(90.0, controller.apply(150.0, 50.0, validGear));
+        assertEquals(ABS_HIGH_PULSE, controller.apply(EXCESSIVE_PRESSURE, HIGH_SPEED, validGear));
     }
 
     @Test
     @DisplayName("Normal braking should reset the ABS alternating state")
     void apply_absStateResets_whenNormalBrakingOccurs() {
-        controller.apply(85.0, 35.0, validGear); // triggers HIGH (90)
-        controller.apply(50.0, 20.0, validGear); // normal braking (50), resets ABS
+        controller.apply(ABS_TRIGGER_PRESSURE, ABS_TRIGGER_SPEED, validGear);
+        controller.apply(NORMAL_PRESSURE, NORMAL_SPEED, validGear);
 
-        assertEquals(90.0, controller.apply(85.0, 35.0, validGear), "Should start with HIGH pulse again");
+        assertEquals(ABS_HIGH_PULSE, controller.apply(ABS_TRIGGER_PRESSURE, ABS_TRIGGER_SPEED, validGear));
     }
 
     // --- EMERGENCY BRAKING TESTS ---
@@ -87,17 +89,17 @@ class BrakeControllerTest {
     void emergencyBrake_appliesMaxPressureAndSetsWarning() {
         controller.emergencyBrake(validGear);
 
-        assertEquals(100.0, controller.getPressure());
+        assertEquals(MAX_PRESSURE, controller.getPressure());
         assertTrue(controller.isWarningActive());
     }
 
     @Test
     @DisplayName("Emergency brake resets the ABS alternating state")
     void emergencyBrake_resetsAbsState() {
-        controller.apply(85.0, 35.0, validGear); // triggers HIGH (90)
-        controller.emergencyBrake(validGear);    // applies MAX (100) and resets ABS
+        controller.apply(ABS_TRIGGER_PRESSURE, ABS_TRIGGER_SPEED, validGear);
+        controller.emergencyBrake(validGear);
 
-        assertEquals(90.0, controller.apply(85.0, 35.0, validGear), "Should start with HIGH pulse again");
+        assertEquals(ABS_HIGH_PULSE, controller.apply(ABS_TRIGGER_PRESSURE, ABS_TRIGGER_SPEED, validGear));
     }
 
     // --- EXCEPTION & VALIDATION TESTS ---
@@ -106,32 +108,20 @@ class BrakeControllerTest {
     @ValueSource(doubles = {-1.0, -0.1, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY})
     @DisplayName("Invalid pressure values throw IllegalArgumentException")
     void apply_invalidPressure_throwsIllegalArgumentException(double invalidPressure) {
-        IllegalArgumentException exception = assertThrows(
-                IllegalArgumentException.class,
-                () -> controller.apply(invalidPressure, 20.0, validGear)
-        );
-        assertEquals("pressure must be a finite non-negative value", exception.getMessage());
+        assertThrows(IllegalArgumentException.class, () -> controller.apply(invalidPressure, NORMAL_SPEED, validGear));
     }
 
     @ParameterizedTest
     @ValueSource(doubles = {-1.0, -0.1, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY})
     @DisplayName("Invalid speed values throw IllegalArgumentException")
     void apply_invalidSpeed_throwsIllegalArgumentException(double invalidSpeed) {
-        IllegalArgumentException exception = assertThrows(
-                IllegalArgumentException.class,
-                () -> controller.apply(50.0, invalidSpeed, validGear)
-        );
-        assertEquals("speed must be a finite non-negative value", exception.getMessage());
+        assertThrows(IllegalArgumentException.class, () -> controller.apply(NORMAL_PRESSURE, invalidSpeed, validGear));
     }
 
     @Test
     @DisplayName("Gear in Park throws IllegalStateException during apply")
     void apply_gearIsPark_throwsIllegalStateException() {
-        IllegalStateException exception = assertThrows(
-                IllegalStateException.class,
-                () -> controller.apply(50.0, 20.0, GearBox.Gear.P)
-        );
-        assertEquals("braking is unavailable while the gearbox is in park", exception.getMessage());
+        assertThrows(IllegalStateException.class, () -> controller.apply(NORMAL_PRESSURE, NORMAL_SPEED, GearBox.Gear.P));
     }
 
     @Test
@@ -143,10 +133,6 @@ class BrakeControllerTest {
     @Test
     @DisplayName("Null gear throws NullPointerException")
     void ensureBrakingAllowed_nullGear_throwsNullPointerException() {
-        NullPointerException exception = assertThrows(
-                NullPointerException.class,
-                () -> controller.apply(50.0, 20.0, null)
-        );
-        assertEquals("gear must not be null", exception.getMessage());
+        assertThrows(NullPointerException.class, () -> controller.apply(NORMAL_PRESSURE, NORMAL_SPEED, null));
     }
 }

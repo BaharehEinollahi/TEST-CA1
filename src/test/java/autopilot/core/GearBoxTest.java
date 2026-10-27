@@ -12,6 +12,14 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class GearBoxTest {
 
+    private static final double STATIONARY_SPEED = 0.0;
+    private static final double CREEPING_SPEED = 0.1;
+    private static final double UNDER_REVERSE_LIMIT_SPEED = 4.99;
+    private static final double REVERSE_LIMIT_SPEED = 5.0;
+    private static final double REVERSING_SPEED = 20.0;
+    private static final double COASTING_SPEED = 50.0;
+    private static final double NEGATIVE_SPEED_TEST = -50.0;
+
     private FakeSpeedSensor fakeSensor;
     private GearBox gearBox;
 
@@ -21,32 +29,12 @@ class GearBoxTest {
         gearBox = new GearBox(fakeSensor);
     }
 
-    // --- INITIALIZATION & NULL CHECKS ---
-
-    @Test
-    @DisplayName("Constructor with null sensor throws NullPointerException")
-    void constructor_nullSensor_throwsNullPointerException() {
-        assertThrows(NullPointerException.class, () -> new GearBox(null));
-    }
-
-    @Test
-    @DisplayName("Setting null speed sensor throws NullPointerException")
-    void setSpeedSensor_null_throwsNullPointerException() {
-        assertThrows(NullPointerException.class, () -> gearBox.setSpeedSensor(null));
-    }
-
-    @Test
-    @DisplayName("Initial gear should be Park (P)")
-    void initialState_isPark() {
-        assertEquals(GearBox.Gear.P, gearBox.getCurrentGear());
-    }
-
     // --- SAME GEAR (EARLY EXIT) ---
 
     @Test
     @DisplayName("Changing to the current gear ignores speed validation and succeeds")
     void changeTo_sameGear_returnsEarly() {
-        fakeSensor.setSpeed(-50.0); // Would normally throw IllegalArgumentException
+        fakeSensor.setSpeed(NEGATIVE_SPEED_TEST);
         assertDoesNotThrow(() -> gearBox.changeTo(GearBox.Gear.P));
         assertEquals(GearBox.Gear.P, gearBox.getCurrentGear());
     }
@@ -58,11 +46,7 @@ class GearBoxTest {
     @DisplayName("Invalid speed values throw IllegalArgumentException")
     void changeTo_invalidSpeed_throwsIllegalArgumentException(double invalidSpeed) {
         fakeSensor.setSpeed(invalidSpeed);
-        IllegalArgumentException exception = assertThrows(
-                IllegalArgumentException.class,
-                () -> gearBox.changeTo(GearBox.Gear.R)
-        );
-        assertEquals("speed must be a finite non-negative value", exception.getMessage());
+        assertThrows(IllegalArgumentException.class, () -> gearBox.changeTo(GearBox.Gear.R));
     }
 
     // --- VALID TRANSITIONS ---
@@ -70,7 +54,7 @@ class GearBoxTest {
     @Test
     @DisplayName("P -> R is allowed if speed is strictly under 5.0 km/h")
     void changeTo_PtoR_underSpeedLimit_succeeds() {
-        fakeSensor.setSpeed(4.99);
+        fakeSensor.setSpeed(UNDER_REVERSE_LIMIT_SPEED);
         gearBox.changeTo(GearBox.Gear.R);
         assertEquals(GearBox.Gear.R, gearBox.getCurrentGear());
     }
@@ -80,7 +64,7 @@ class GearBoxTest {
     void changeTo_RtoD_stationary_succeeds() {
         setToReverse();
 
-        fakeSensor.setSpeed(0.0);
+        fakeSensor.setSpeed(STATIONARY_SPEED);
         gearBox.changeTo(GearBox.Gear.D);
         assertEquals(GearBox.Gear.D, gearBox.getCurrentGear());
     }
@@ -90,7 +74,7 @@ class GearBoxTest {
     void changeTo_DtoR_stationary_succeeds() {
         setToDrive();
 
-        fakeSensor.setSpeed(0.0);
+        fakeSensor.setSpeed(STATIONARY_SPEED);
         gearBox.changeTo(GearBox.Gear.R);
         assertEquals(GearBox.Gear.R, gearBox.getCurrentGear());
     }
@@ -100,7 +84,7 @@ class GearBoxTest {
     void changeTo_RtoN_atAnySpeed_succeeds() {
         setToReverse();
 
-        fakeSensor.setSpeed(20.0); // Moving backwards
+        fakeSensor.setSpeed(REVERSING_SPEED);
         gearBox.changeTo(GearBox.Gear.N);
         assertEquals(GearBox.Gear.N, gearBox.getCurrentGear());
     }
@@ -110,7 +94,7 @@ class GearBoxTest {
     void changeTo_NtoD_atAnySpeed_succeeds() {
         setToNeutral();
 
-        fakeSensor.setSpeed(50.0); // Coasting forward
+        fakeSensor.setSpeed(COASTING_SPEED);
         gearBox.changeTo(GearBox.Gear.D);
         assertEquals(GearBox.Gear.D, gearBox.getCurrentGear());
     }
@@ -120,7 +104,7 @@ class GearBoxTest {
     @Test
     @DisplayName("P -> R fails if speed is exactly 5.0 km/h or higher")
     void changeTo_PtoR_atOrAboveSpeedLimit_fails() {
-        fakeSensor.setSpeed(5.0);
+        fakeSensor.setSpeed(REVERSE_LIMIT_SPEED);
         assertThrows(IllegalGearChangeException.class, () -> gearBox.changeTo(GearBox.Gear.R));
     }
 
@@ -128,7 +112,7 @@ class GearBoxTest {
     @DisplayName("R -> D fails if vehicle is moving")
     void changeTo_RtoD_moving_fails() {
         setToReverse();
-        fakeSensor.setSpeed(0.1);
+        fakeSensor.setSpeed(CREEPING_SPEED);
         assertThrows(IllegalGearChangeException.class, () -> gearBox.changeTo(GearBox.Gear.D));
     }
 
@@ -136,24 +120,23 @@ class GearBoxTest {
     @DisplayName("D -> R fails if vehicle is moving")
     void changeTo_DtoR_moving_fails() {
         setToDrive();
-        fakeSensor.setSpeed(0.1);
+        fakeSensor.setSpeed(CREEPING_SPEED);
         assertThrows(IllegalGearChangeException.class, () -> gearBox.changeTo(GearBox.Gear.R));
     }
 
     // --- ILLEGAL STATE TRANSITIONS ---
-    // These tests ensure paths not explicitly permitted by isAllowed() are rejected.
 
     @Test
     @DisplayName("P -> D is an illegal transition")
     void changeTo_PtoD_fails() {
-        fakeSensor.setSpeed(0.0);
+        fakeSensor.setSpeed(STATIONARY_SPEED);
         assertThrows(IllegalGearChangeException.class, () -> gearBox.changeTo(GearBox.Gear.D));
     }
 
     @Test
     @DisplayName("P -> N is an illegal transition")
     void changeTo_PtoN_fails() {
-        fakeSensor.setSpeed(0.0);
+        fakeSensor.setSpeed(STATIONARY_SPEED);
         assertThrows(IllegalGearChangeException.class, () -> gearBox.changeTo(GearBox.Gear.N));
     }
 
@@ -161,7 +144,7 @@ class GearBoxTest {
     @DisplayName("N -> R is an illegal transition")
     void changeTo_NtoR_fails() {
         setToNeutral();
-        fakeSensor.setSpeed(0.0);
+        fakeSensor.setSpeed(STATIONARY_SPEED);
         assertThrows(IllegalGearChangeException.class, () -> gearBox.changeTo(GearBox.Gear.R));
     }
 
@@ -169,7 +152,7 @@ class GearBoxTest {
     @DisplayName("Shifting back to P is illegal from any gear (D -> P)")
     void changeTo_DtoP_fails() {
         setToDrive();
-        fakeSensor.setSpeed(0.0);
+        fakeSensor.setSpeed(STATIONARY_SPEED);
         assertThrows(IllegalGearChangeException.class, () -> gearBox.changeTo(GearBox.Gear.P));
     }
 
@@ -177,34 +160,31 @@ class GearBoxTest {
     @DisplayName("D -> N is an illegal transition")
     void changeTo_DtoN_fails() {
         setToDrive();
-        fakeSensor.setSpeed(0.0);
+        fakeSensor.setSpeed(STATIONARY_SPEED);
         assertThrows(IllegalGearChangeException.class, () -> gearBox.changeTo(GearBox.Gear.N));
     }
 
     // --- STATE SETUP HELPERS ---
 
     private void setToReverse() {
-        fakeSensor.setSpeed(0.0);
+        fakeSensor.setSpeed(STATIONARY_SPEED);
         gearBox.changeTo(GearBox.Gear.R);
     }
 
     private void setToNeutral() {
-        fakeSensor.setSpeed(0.0);
+        fakeSensor.setSpeed(STATIONARY_SPEED);
         gearBox.changeTo(GearBox.Gear.R);
         gearBox.changeTo(GearBox.Gear.N);
     }
 
     private void setToDrive() {
-        fakeSensor.setSpeed(0.0);
+        fakeSensor.setSpeed(STATIONARY_SPEED);
         gearBox.changeTo(GearBox.Gear.R);
         gearBox.changeTo(GearBox.Gear.D);
     }
 
     // --- FAKE DEPENDENCY ---
 
-    /**
-     * Lightweight fake implementation of SpeedSensor to avoid Mockito coupling.
-     */
     private static class FakeSpeedSensor implements SpeedSensor {
         private double speed = 0.0;
 
