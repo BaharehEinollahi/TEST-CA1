@@ -4,6 +4,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -12,12 +13,10 @@ class BrakeControllerTest {
 
     private static final double NORMAL_PRESSURE = 50.0;
     private static final double NORMAL_SPEED = 20.0;
+    private static final double HIGH_SPEED = 50.0;
     private static final double MAX_PRESSURE = 100.0;
     private static final double EXCESSIVE_PRESSURE = 150.0;
-    private static final double HIGH_SPEED = 50.0;
 
-    private static final double ABS_PRESSURE_THRESHOLD = 80.0;
-    private static final double ABS_SPEED_THRESHOLD = 30.0;
     private static final double ABS_TRIGGER_PRESSURE = 85.0;
     private static final double ABS_TRIGGER_SPEED = 35.0;
     private static final double ABS_HIGH_PULSE = 90.0;
@@ -31,29 +30,20 @@ class BrakeControllerTest {
         controller = new BrakeController();
     }
 
-    // --- NORMAL BRAKING TESTS ---
+    // --- NORMAL & BOUNDARY BRAKING TESTS ---
 
-    @Test
-    @DisplayName("Normal conditions should apply requested exact pressure")
-    void apply_normalConditions_setsExactPressure() {
-        double result = controller.apply(NORMAL_PRESSURE, NORMAL_SPEED, validGear);
-        assertEquals(NORMAL_PRESSURE, result);
-        assertEquals(NORMAL_PRESSURE, controller.getPressure());
-    }
-
-    @Test
-    @DisplayName("Requested pressure exceeding MAX_PRESSURE caps at 100.0 without ABS")
-    void apply_exceedsMaxPressureAtLowSpeed_capsAtMax() {
-        double result = controller.apply(EXCESSIVE_PRESSURE, NORMAL_SPEED, validGear);
-        assertEquals(MAX_PRESSURE, result);
-        assertEquals(MAX_PRESSURE, controller.getPressure());
-    }
-
-    @Test
-    @DisplayName("Values exactly at ABS thresholds do NOT trigger ABS")
-    void apply_exactlyAtAbsThresholds_doesNotTriggerAbs() {
-        assertEquals(ABS_PRESSURE_THRESHOLD, controller.apply(ABS_PRESSURE_THRESHOLD, NORMAL_SPEED, validGear));
-        assertEquals(ABS_TRIGGER_PRESSURE, controller.apply(ABS_TRIGGER_PRESSURE, ABS_SPEED_THRESHOLD, validGear));
+    @ParameterizedTest
+    @CsvSource({
+            "50.0, 20.0, 50.0",   // Normal conditions apply exact pressure
+            "150.0, 20.0, 100.0", // Exceeding MAX_PRESSURE at low speed caps at 100
+            "80.0, 20.0, 80.0",   // Exactly at pressure threshold does not trigger ABS
+            "85.0, 30.0, 85.0"    // Exactly at speed threshold does not trigger ABS
+    })
+    @DisplayName("Non-ABS conditions apply correct capped or exact pressure")
+    void apply_nonAbsConditions_returnsExpectedPressure(double requestedPressure, double speed, double expectedPressure) {
+        double result = controller.apply(requestedPressure, speed, validGear);
+        assertEquals(expectedPressure, result);
+        assertEquals(expectedPressure, controller.getPressure());
     }
 
     // --- ABS BRAKING TESTS ---
